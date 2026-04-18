@@ -113,7 +113,7 @@ def dual_track_match(row):
 # ==========================================
 # 3. 界面逻辑
 # ==========================================
-st.set_page_config(page_title="被装匹配系统", layout="wide")
+st.set_page_config(page_title="服装规格匹配系统", layout="wide")
 st.title("👔 智能规格匹配系统 (容差升级版)")
 
 uploaded_file = st.file_uploader("📂 上传人员体征表格", type=["xlsx", "xls", "csv"])
