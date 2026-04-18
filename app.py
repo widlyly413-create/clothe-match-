@@ -170,6 +170,7 @@ if uploaded_file:
                 
                 st.write("### 📊 匹配结果详情")
                 
+                # 定义高亮样式函数
                 def highlight_status(val):
                     if '[人工复核]' in str(val):
                         return 'color: #D32F2F; font-weight: bold'
@@ -177,7 +178,8 @@ if uploaded_file:
                         return 'color: #1976D2'
                     return 'color: green'
 
-                st.dataframe(df.style.applymap(highlight_status, subset=['系统状态']))
+                # --- 关键修复：将 .applymap 替换为 .map ---
+                st.dataframe(df.style.map(highlight_status, subset=['系统状态']))
 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
