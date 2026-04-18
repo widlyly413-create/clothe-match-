@@ -57,11 +57,13 @@ def get_track_b_size(gender, height, weight):
     return None
 
 def dual_track_match(row):
-    """双轨合并逻辑 (彻底解耦版)"""
+    """双轨合并逻辑 (经验优先版)"""
     gender = row.get('性别')
     h_val = row.get('身高')
     w_val = row.get('体重')
-    c_val = row.get('胸围')
+    
+    # 安全获取胸围，如果不存在则返回 NaN，不影响原表格结构
+    c_val = row.get('胸围', np.nan) 
     
     if pd.isna(gender) or pd.isna(h_val) or pd.isna(w_val):
         return "数据不全", "缺失必填项(性别/身高/体重)"
@@ -71,31 +73,34 @@ def dual_track_match(row):
     except (ValueError, TypeError):
         return "数据错误", "身高或体重包含非数字"
 
-    # --- 核心逻辑分离 ---
-    status_flags = []
-    
-    # 1. 确定用于 Track A 的胸围数据
+    # --- 1. 获取用于 Track A 的理论胸围 ---
     if pd.isna(c_val) or str(c_val).strip() == "":
         c_theory = estimate_chest_by_theory(gender, h, w)
-        status_flags.append("[理论估算胸围]")
     else:
         try:
             c_theory = float(c_val)
         except (ValueError, TypeError):
             c_theory = estimate_chest_by_theory(gender, h, w)
-            status_flags.append("[理论估算胸围]")
 
-    # 2. 分别运行两条独立轨道
-    a_size = get_track_a_size(gender, h, c_theory) # 理论派
-    b_size = get_track_b_size(gender, h, w)        # 经验派
+    # --- 2. 分别运行两条独立轨道 ---
+    a_size = get_track_a_size(gender, h, c_theory) # Track A: 理论派
+    b_size = get_track_b_size(gender, h, w)        # Track B: 经验派
     
-    # 3. 冲突对齐逻辑
-    if b_size and b_size != a_size:
-        status_flags.append(f"[人工复核] 历史高频选 {b_size}")
-    else:
-        if not status_flags: status_flags.append("通过")
+    # --- 3. 冲突对齐逻辑 (经验优先) ---
+    status_flags = []
+    final_size = ""
+    
+    if b_size: # 如果能在历史记录中找到相似经验
+        final_size = b_size
+        if b_size != a_size:
+            status_flags.append(f"[人工复核] 标准规则匹配为 {a_size}")
+        else:
+            status_flags.append("通过")
+    else: # 如果没找到历史记录，只能用理论兜底
+        final_size = a_size
+        status_flags.append("通过 (无历史记录，纯理论推导)")
             
-    return a_size, " | ".join(status_flags)
+    return final_size, " | ".join(status_flags)
 
 # ==========================================
 # 2. 智能表头预处理 (Smart Header Parsing)
@@ -123,12 +128,12 @@ def process_uploaded_file(uploaded_file):
         elif "身高" in c_str: col_mapping[col] = "身高"
         elif "体重" in c_str: col_mapping[col] = "体重"
         elif "胸围" in c_str: col_mapping[col] = "胸围"
+        elif "腰围" in c_str: col_mapping[col] = "腰围"
         elif "姓名" in c_str: col_mapping[col] = "姓名"
         
     df = df.rename(columns=col_mapping)
-    if "胸围" not in df.columns:
-        df["胸围"] = np.nan
-        
+    
+    # 移除了强行添加胸围/腰围空列的代码，原表没有的话就不会出现在输出里
     df = df.dropna(subset=['性别', '身高', '体重'], how='all')
     return df
 
@@ -136,7 +141,7 @@ def process_uploaded_file(uploaded_file):
 # 3. 网页端交互界面 (Streamlit UI)
 # ==========================================
 st.set_page_config(page_title="被装智能匹配系统", layout="wide", page_icon="👔")
-st.title("👔 执勤服智能规格匹配系统 (双轨解耦版)")
+st.title("👔 执勤服智能规格匹配系统 (经验优先版)")
 
 with st.sidebar:
     st.header("⚙️ 配置中心")
@@ -145,10 +150,10 @@ with st.sidebar:
     st.info(f"系统运行时间：\n{cst_time} (CST)")
     st.markdown("---")
     st.markdown("""
-    **双轨匹配架构：**
-    - **Track A (理论)**: 基于人机工程学比例推算。
-    - **Track B (经验)**: 检索历史数据库相似案例。
-    - **自动冲突识别**: 两轨结果不一致时自动报警。
+    **双轨架构说明 (Track B 优先)：**
+    - 优先匹配**历史经验库 (Track B)** 的实际穿着选择。
+    - 若与**物理比例规则 (Track A)** 产生分歧，则报警提示人工复核。
+    - 若数据不含胸围/腰围，系统隐藏对应列，不影响自动推导。
     """)
 
 uploaded_file = st.file_uploader("📂 上传单位人员体征表格", type=["xlsx", "xls", "csv"])
@@ -170,15 +175,11 @@ if uploaded_file:
                 
                 st.write("### 📊 匹配结果详情")
                 
-                # 定义高亮样式函数
                 def highlight_status(val):
                     if '[人工复核]' in str(val):
                         return 'color: #D32F2F; font-weight: bold'
-                    elif '[理论估算胸围]' in str(val):
-                        return 'color: #1976D2'
                     return 'color: green'
 
-                # --- 关键修复：将 .applymap 替换为 .map ---
                 st.dataframe(df.style.map(highlight_status, subset=['系统状态']))
 
                 output = io.BytesIO()
@@ -191,7 +192,7 @@ if uploaded_file:
                 st.download_button(
                     label="📥 下载完成匹配的 Excel 表格",
                     data=output.getvalue(),
-                    file_name="执勤服批量匹配结果_双轨版.xlsx",
+                    file_name="执勤服批量匹配结果_经验优先.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
     except Exception as e:
